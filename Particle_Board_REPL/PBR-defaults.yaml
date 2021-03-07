@@ -31,7 +31,7 @@ test:
     do_qqc_func     : input-serial
 
 dialogs :
-    title : 'Particle Board Interface'
+    title : 'Particle Board REPL'
 
 exec:
     # function name to autoexec when asked to run

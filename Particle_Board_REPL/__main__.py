@@ -1,6 +1,6 @@
 #!/bin/python
 
-from Particle_Board_Interface.core import init
+from Particle_Board_REPL.core import init
 
 
 def main():

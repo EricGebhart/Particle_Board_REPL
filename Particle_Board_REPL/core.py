@@ -35,15 +35,16 @@ executing the process as desired.
 
 # Particle board interface state
 PB = {
+    "config": {},
     "device": {"id": "", "name": "", "path": "", "last_id": ""},
     "defaults": {
-        "config_file": "PBRconfig.yaml",
+        "config_file": "PBRConfig.yaml",
         "loglevel": "info",
         "logfile": "PBR.log",
     },
 }
 
-PB |= r.load_defaults("Particle_Board_REPL", "PBR-defaults.yaml")
+r.load_defaults(PB, "Particle_Board_REPL", "PBR-defaults.yaml")
 
 logger = logging.getLogger()
 
