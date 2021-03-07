@@ -37,7 +37,7 @@ executing the process as desired.
 PB = {
     "device": {"id": "", "name": "", "path": "", "last_id": ""},
     "defaults": {
-        "config_file": "pbr-config.yaml",
+        "config_file": "PBRconfig.yaml",
         "loglevel": "info",
         "logfile": "PBR.log",
     },

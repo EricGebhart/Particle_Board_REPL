@@ -10,7 +10,7 @@ except ImportError:
 HERE = pathlib.Path(__file__).parent
 README = (HERE / "README.md").read_text()
 
-from Particle_Board_Interface import __version__
+from Particle_Board_REPL import __version__
 
 setup(
     name="Particle_Board_REPL",

@@ -1,17 +1,24 @@
-# particle board REPL (pbr)  program.
+# particle board REPL (PBR)  program.
+
+
+    pip install Particle_Board_REPL
+    
+To run interactively in with the REPL.
+
+    PBR -r
 
 This Module adds Particle board cli functionality to
-the (_Simple_Process_REPL_)[https://github.com/Ericgebhart/Simple_Process_REPL.git] 
+the [Simple_Process_REPL](https://github.com/Ericgebhart/Simple_Process_REPL.git) 
 along with
 various other higher level functions for interacting with Particle.io boards.
 The idea is to make it possible to create a repeatable process which can interact
 test, and program a particle.io board.
 
-This uses the particle.io cli, 'particle-cli in the AUR, Arch-linux',
+This uses the particle.io cli, **particle-cli** in the Arch-linux AUR,
 to interface with a board, verify it's life, update it, claim/register
 it, flash it, test it, etc.
 
-The (_Simple_Process_REPL_)[https://github.com/Ericgebhart/Simple_Process_REPL.git] 
+The [_Simple_Process_REPL_](https://github.com/Ericgebhart/Simple_Process_REPL.git) 
 provides the basic application functionality here. Everything
 is configurable in a yaml file, Both Simple_process_repl and the particle board
 interface provide defaults which are merged into _config_ in the Application
@@ -36,9 +43,6 @@ And so it goes.
 
 # Simple_Process_REPL runs 4 ways, and so does PBR.
 
-First, let's get a better name.
-Make sure that `/usr/bin/python/env` is in your _$PATH_
-
 Once you have some processes defined you can then run what you like in
 4 different ways,w
 
@@ -52,7 +56,7 @@ Once you have some processes defined you can then run what you like in
   PBR get list`
 
 ## Dependencies
- * (_Simple_Process_REPL_)[https://github.com/Ericgebhart/Simple_Process_REPL.git] 
+ * [_Simple_Process_REPL_](https://github.com/Ericgebhart/Simple_Process_REPL.git) 
  * It's all in pypi, so just `pip install Particle_Board_Interface`
 
 
