@@ -470,6 +470,7 @@ def repl(prompt="SPR:> ", commandstr=None):
     readline.parse_and_bind("tab: complete")
     readline.set_completer(make_completer(all_symbols))
     HistoryConsole()
+
     if commandstr is not None:
         try:
             eval_list(parse(commandstr))

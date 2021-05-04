@@ -38,18 +38,15 @@ And so it goes.
 Once you have some processes defined you can then run what you like in
 4 different ways,w
 
- * run the autoexec setting once: `python -m Particle_Board_Interface`
+ * run the autoexec setting once: `PBR`
  * Start a REPL   `-r`
  * Run the autoexec setting in a loop with a continue dialog `-i` 
  * To run commands instead of the autoexec, Just add them to the command.
 
  `PBR -r get list
   PBR -i get list
-  PBR get list`
-
-## Dependencies
- * [_Simple_Process_REPL_](https://github.com/Ericgebhart/Simple_Process_REPL.git) 
- * It's all in pypi, so just `pip install Particle_Board_Interface`
+  PBR get list
+  PBR -r msgbox "hello"`
 
 
 ### Getting Help
@@ -100,17 +97,20 @@ Something very important for knowing the state of your Particle.io boron.
 
 ## The modules, main.py, particle.py, and Config.
 
-The more complex functions are in main.py, These are functions which 
+The more complex Particle functions are in main.py, These are functions which 
 interact with the Application state as well as the device. 
 This is also where the symbol tables are defined for the add on particle cli
 functionality.
 
-There is very little in the particle.py module. These are all of
-the basic particle-cli commands I've used so far. All of these functions are
-here to be as close to bare particle-cli commands as can be. I combined some 
-things, like flash always does dfu first, identify always does a listen. 
+There is very little in the particle.py module. Particle cli commands are 
+one line functions, and truly many of them are unecessary as they could be
+done with the `pcmd`.
+
+These are most of the basic particle-cli commands I've used so far. All of 
+these functions are here to be as close to bare particle-cli commands as can be. 
+I combined some things, like flash always does dfu first, identify always does a listen. 
 Get is perhaps the most complex as it does wait and poll to give a chance 
-for a reset or a plug.
+for a reset or a plug. Internally there are a few versions of get to choose from.
 
 The rest of the functions can actually live in the configuration file. 
 It is only necessary to modify python code if there is a desire for more 
@@ -125,6 +125,10 @@ tried _shell=True_ with no change. So it's going be down in the details somewher
 
 I had thought that perhaps using the particle.get_w_wait function to wait for 
 the device could work nicely, but it does not. 
+
+__login__ and __log_out__ needed to be called with os.system in order for them to
+behave nicely with their prompts. Subprocess could work I think, but it's configuration
+is complex and it's not worth investigating.
 
 
 # The Internals.
@@ -176,18 +180,18 @@ if in interactive loop mode, _-i_, the continue dialog will catch the fail for t
 loop.
 
 ## The default process
-In the configuration there is an __autoexec__ attribute. This should be a
-symbol name or list of symbol names to run as the default process. This
-is the process that will run when running cli in interactive loop mode,
+In the __exec__ section of the configuration there is an __autoexec__ attribute. 
+This should be a symbol name or list of symbol names to run as the default process. 
+This is the process that will run when running cli in interactive loop mode,
 or when run once.
   
-If symbols are given on the cli after the option then that list is executed once 
-automatically instead of the symbol in autoexec.
+If commands are given on the cli after the option then that list is executed once 
+automatically instead of the commands in autoexec.
 
 The easiest way to understand this is system is by using the REPL. 
 It will show you how it works. `PBR -r` 
  
-Then type _help_ and/or _showin_.
+Then type _help_, particle-help, and _showin_.  __Read It!__
 
 Once in the REPL at the prompt; __PBR:>,
 _help_ shows all the commands known with their documentation. 
@@ -210,7 +214,8 @@ Compound commands are commands defined outside of python code. They are strings 
 can be parsed and evaluated by the REPL/interpreter.
 
 Compound commands can be built from other compound commands and _special_ commands.
-Compound commands can be defined in yaml, in python code, or interactively in the REPL.
+Compound commands can be defined in the configuration yaml, in python code, 
+or interactively in the REPL.
 
 
 ## The REPL
@@ -219,15 +224,16 @@ The REPL is very convenient as it saves state, and can be used to
 interactively create/execute a process step by step. 
 `help` at the REPL prompt. 
 
- * Builtins __help__
- * __show__, __showin__, and __show-all__ are quite handy.
+ * Builtins __help__ 
+ * __showin__, are quite handy.
  * REPL prompt: persistent history and tab completion. 
  * The __loglvl__ command can change the logging level interactively.
  * Defining a symbol of a special works. - Super cool.
     * `msgbox "Hello World"` 
     * `def mymsg "my special msg" msgbox "Hello World"`
  * __log-info__ and __log-debug__ allow sending of arbitrary messages to the log.
- * __sh__ for running shell commands. - There are known bugs.
+ * __sh__ for running shell commands.
+ * __pcmd__ for running particle-cli commands.
 
 ### Application State. 
 
@@ -236,9 +242,9 @@ AS = {
     "config": {},
     "args": {},
     "defaults": {
-        "config_file": "SPR-config.yaml",
+        "config_file": "PBR-config.yaml",
         "loglevel": "info",
-        "logfile": "SPR.log",
+        "logfile": "PBR.log",
     },
     "device": {"id": "", "name": "", "path": ""},
     "wifi-connected": False,
@@ -250,7 +256,7 @@ AS = {
  * defaults is used by argparse to supply default options to the command line.
  * device is an imaginary device. Which we can wait for and handshake with.
 
-The command: **show-all** or **showin** in the REPL will give it to you in yaml.
+The command: **showin** in the REPL will give it to you in yaml.
 **help** will give you the documentation for every command you can do, even the ones you just created. 
 The easiest way to access it is `showin device` or `showin config serial`
 with `showin key1 key2,...` is the command to find sub-section or attributes in the REPL.

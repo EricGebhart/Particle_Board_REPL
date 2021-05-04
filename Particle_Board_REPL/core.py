@@ -771,7 +771,12 @@ def do_something():
     or Run commands given on the cli.
     """
 
-    commands = " ".join(AS["args"]["commands"])
+    # make sure the cli is something or it is None.
+    commands = get_in(AS, ["args", "commands"])
+    if commands is not None and len(commands) > 0:
+        commands = " ".join(commands)
+    else:
+        commands = None
 
     # Run the repl.
     if AS["args"]["repl"]:
