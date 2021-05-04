@@ -459,7 +459,7 @@ class HistoryConsole(code.InteractiveConsole):
         readline.write_history_file(histfile)
 
 
-def repl(prompt="SPR:> "):
+def repl(prompt="SPR:> ", commandstr=None):
     """
     An input loop. nothing fancy. It does have history and
     completion at least.
@@ -470,6 +470,11 @@ def repl(prompt="SPR:> "):
     readline.parse_and_bind("tab: complete")
     readline.set_completer(make_completer(all_symbols))
     HistoryConsole()
+    if commandstr is not None:
+        try:
+            eval_list(parse(commandstr))
+        except Exception as e:
+            logger.error(e)
 
     while True:
         try:

@@ -730,14 +730,14 @@ _specials = [
 
 
 # endless loop with dialog next y/n.
-def interactive_loop():
+def interactive_loop(commands=None):
     """Execute the autoexec command in an interactive
     loop which reports failures and prompts to do another.
     """
     interactive = AS["args"]["interactive"]
     while interactive is True:
         try:
-            do_one()
+            do_one(commands)
             if continue_to_next_dialog():
                 interactive = False
         except Exception as e:
@@ -747,10 +747,13 @@ def interactive_loop():
         reset_device()
 
 
-def do_one():
+def do_one(commands=None):
     """Execute the default process one time, with fail and finish dialogs"""
     try:
-        eval_default_process()
+        if commands is not None:
+            r.eval_cmd(commands)
+        else:
+            eval_default_process()
         dialog_finish()
 
     except Exception as e:
@@ -772,19 +775,19 @@ def do_something():
 
     # Run the repl.
     if AS["args"]["repl"]:
-        r.repl(get_in_config(["REPL", "prompt"]))
+        r.repl(get_in_config(["REPL", "prompt"]), commands)
 
     # if there aren't any commands on the cli
     # do the auto exec in a loop or once.
     elif len(commands) == 0:
         if AS["args"]["interactive"] is True:
-            interactive_loop()
+            interactive_loop(commands)
         else:
-            do_one()
+            do_one(commands)
 
     # run the commands given on the cli.
     else:
-        logger.info("Attempting to do this: %s", commands)
+        logger.debug("Attempting to do this: %s", commands)
         r.eval_cmd(commands)
 
 
