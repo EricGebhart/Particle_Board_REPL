@@ -1,258 +1,858 @@
-import Simple_Process_REPL.core as r
-from Simple_Process_REPL.options import define_help_text
-import Particle_Board_REPL.particle as P
-import regex as re
+import pkgutil
+from dialog import Dialog
+from sys import exit
 import logging
+import Particle_Board_REPL.logs as logs
+from Particle_Board_REPL.options import create_parser
 import os
+from platform import system as platform
+import Particle_Board_REPL.repl as r
+
+import regex as re
+import serial
+import subprocess
+import time
 import yaml
 
 
 """
-The purpose of this module is to Serve as a liaison between the
-Interpreter/REPL and the device interface layer, which in this case is
-defined in particle.py
+The main functionality here is to manage options and configurations and
+logging, as well as define some functions which provide the necessary
+functionality we need to define a sparse middle layer between the
+REPL/interpreter and the interface layer to the Application.
 
-The Repl module requires two symbol tables, and a dictionary of
-defaults, as well as any stateful data the application would like to keep.
-In this case it is the _device_ dictionary below.
 
-In many cases particle functions may be used directly in the symbol table.
-In other cases where additional functionality,
-or data use is needed, the function would be defined here.
+This file defines the symbol table for the interpreter,
+initializes the application, and then runs in the requested manner.
 
-The symbol table of these functions is defined and passed to
-to the repl core module which is reponsible for similar things
-as well as parsing the command line, setting up logging, and
-executing the process as desired.
+The symbols defined here are of a generic application nature.
+save and load configurations, show variables, get help, all
+the sorts of commands that can live here.
+
+This layer does maintain a dictionary of state called AS,
+It integrates the state map as given by the application.
+functions are provided for easy access to everything the
+application's function layer needs.
+
+Aside from the functions declared here, and in the
+application main.py, functionality is defined by interpreted lists
+of symbols which live in the YAML config file. They can also be
+coded here, but that is only really necessary if new functionality
+is desired.
+
+The repl allows for the creation of new function/commands interactively.
+Those functions can then be saved as part of the configuration or separately.
+
+The process to be run automatically should be a function in the symbol table
+By default, or if not found, the 'hello' function is used.
+The autoexec attribute in the configuration names the command(s) to run when
+running in a loop or one time with no commands.
 """
 
-# This is a map which is merged with the application state map.
-# Defaults are used by the cli where appropriate.
-# device is our particle board, we need it's id, and the
-# the path of it's device, ie. /dev/ttyUSB..., The board
-# name is boron, photon, whatever. and the last_id just
-# in case we need it.
 
-# Particle board interface state
-PB = {
-    "config": {},
+# Application state, which will contain merged data from the application layer.
+AS = {
     "device": {"id": "", "name": "", "path": "", "last_id": ""},
+    "config": {},
+    "args": {},
+    "wifi-connected": False,
     "defaults": {
-        "config_file": "PBRConfig.yaml",
+        "config_file": "SPR-config.yaml",
         "loglevel": "info",
-        "logfile": "PBR.log",
+        "logfile": "SPR.log",
     },
+    "platform": platform(),
 }
 
-r.load_defaults(PB, "Particle_Board_REPL", "PBR-defaults.yaml")
 
-logger = logging.getLogger()
-
-prefix = """PBR, The Particle_Board_REPL, is an application
-Built upon the Simple_Process_REPL. It is intended to make it easy
-to interact, program and test Particle.io Boards.
-Using the REPL with `PBR -r` is the easiest way to get to know
-the features of this application. By default configurations files are
-loaded so that basic functionalities are provided for. If a configuration
-file is present it will be merged into the defaults. A configuration file
-can be created with the `save_config` command.
-"""
-
-suffix = ""
-
-define_help_text(prefix, suffix)
+# set up the dialog interface
+d = Dialog(dialog="dialog")
+inputbox = d.inputbox
 
 
-def see_images():
-    """Ask if the test images are seen, fail if not."""
-    yno_msg = r.get_in_config(["dialogs", "images_seen"])
-    if not r.ynbox(yno_msg):
-        raise Exception("Failure: Test images not Seen.")
-
-
-def input_serial():
+def merge(a, b, path=None, update=True):
+    """nice solution from stack overflow, non-destructive merge.
+    http://stackoverflow.com/questions/7204805/python-dictionaries-of-dictionaries-merge
     """
-    Function called by test handshake, Asks if images are seen,
-    then presents a dialog loop to receive an 8 digit serial number
-    to be returned back to the handshake and sent to the device.
-    """
-    see_images()
-
-    msg = r.get_in_config(["dialogs", "input_serial"])
-    while True:
-        code, res = r.inputbox(
-            msg, title=r.get_in_config(["dialogs", "title"]), height=10, width=50
-        )
-        if re.match(r"^\d{8}$", res):
-            yno_msg = "%s : %s" % (
-                r.get_in_config(["dialogs", "serial_is_correct"]),
-                res,
-            )
-            if r.ynbox(yno_msg):
-                break
+    if path is None:
+        path = []
+    for key in b:
+        if key in a:
+            if isinstance(a[key], dict) and isinstance(b[key], dict):
+                merge(a[key], b[key], path + [str(key)])
+            elif a[key] == b[key]:
+                pass  # same leaf value
+            elif isinstance(a[key], list) and isinstance(b[key], list):
+                for idx, val in enumerate(b[key]):
+                    a[key][idx] = merge(
+                        a[key][idx],
+                        b[key][idx],
+                        path + [str(key), str(idx)],
+                        update=update,
+                    )
+            elif update:
+                a[key] = b[key]
+            else:
+                raise Exception("Conflict at %s" % ".".join(path + [str(key)]))
         else:
-            r.msgbox(r.get_in_config(["dialogs", "serial_must"]))
-
-    os.system("clear")
-    logger.info("Serial Number Entered is: %s" % res)
-    return res
+            a[key] = b[key]
+    return a
 
 
-def flash_image():
-    "Flash the flash image"
-    P.flash(r.get_in_config(["images", "flash"]))
+def reset_device():
+    "Start fresh with empty device values."
+    new_device = {}
+    id = get_in_device("id")
+
+    for k, v in AS["device"]:
+        new_device[k] = ""
+
+    new_device["last_id"] = id
+    AS["device"] = new_device
 
 
-def flash_tinker():
-    "Flash the tinker image"
-    P.flash(r.get_in_config(["images", "tinker"]))
-
-
-def flash_test():
-    "Flash the test image"
-    P.flash(r.get_in_config(["images", "test"]))
-
-
-def product_add():
-    """ product device add product id - associate the device wit a product"""
-    P.product_add(r.get_in_config(["particle", "product"]), r.get_in_device("id"))
-
-
-def claim():
-    "Claim the device, cloud claim"
-    P.claim(r.get_in_device("id"))
-
-
-def add():
-    "Claim the device, device add"
-    P.add(r.get_in_device("id"))
-
-
-def release():
-    "Release the claim on a device."
-    P.release(r.get_in_device("id"))
-
-
-def cloud_status():
-    "Check to see if the device is connected to the cloud"
-    P.cloud_status(r.get_in_device("id"))
-
-
-def reset_usb():
-    "Reset the usb device."
-    P.reset_usb(r.get_in_device("id"))
-
-
-def list_usb_w_timeout():
-    "Do a serial list repeatedly for timeout period"
-    P.list_usb_w_timeout(r.get_in_config(["waiting", "timeout"]))
-
-
-def get_usb_and_id():
+def set(d):
     """
-    Retrieve and set the USB device, the board name,  and the device id.
-    Uses 'particle serial list' in a timeout loop. This is required
-    for most things. Wait and handshake, use the usb device,
-    and the id is needed by many things.
+    merge in a new dict, like the device dictionary, into
+    the Application state.
     """
-    # PB['usb_device'], PB['device_id'] = P.get_usb_and_id()
-    path, name, id = P.get_w_timeout(r.get_in_config(["waiting", "timeout"]))
-
-    r.set({"device": {"path": path, "name": name, "id": id}})
-    r.show()
+    global AS
+    merge = AS | d
+    AS = merge
 
 
-def wait_for_plist():
-    """Wait for particle serial list to succeed with timeout, doesn't
-    really work."""
-    # we don't care about the results, just to wait.
-    P.get_w_timeout(r.get_in_config(["waiting", "timeout"]))
+def get_in(dict_tree, keys):
+    """
+    Retrieve a value from a dictionary tree, using a key list
+    Returns:
+       The value found at the given key path, or `None` if
+       any of the keys in the path is not found.
+    """
+
+    logger.debug(keys)
+    try:
+        for key in keys:
+            logger.debug("key %s" % key)
+            dict_tree = dict_tree[key]
+
+        return dict_tree
+
+    except KeyError:
+        return None
 
 
-def archive_log():
-    "Move the current logfile to one named after the current device."
-    r.archive_log("%s.log" % r.get_in_device("id"))
+# could have been a partial.
+def get_in_config(keys):
+    "Get stuff from the config, takes a list of keys."
+    return get_in(AS["config"], keys)
 
 
-def particle_help():
-    """A function to provide additional Application specific help."""
-    print(
-        """\n\n Particle Process help:\n
-Particle help can be accessed directly at any time with the 'particle-help'
-command.\n
-When working with a Particle.io board, the first step is to 'get'
-the id and device. There are many commands here which need the usb device
-or the device id.  With that, the basic commands for the process we have
-been intending would be;
+def get_in_device(key):
+    "Get to the device info, easier to read."
+    return get_in(AS["device"], [key])
 
-'start, setup, claim, testit, flash, and archive_log'.
 
-Note that 'start', 'setup', and 'testit', are user defined commands which are
-actually lists of other commands. These are defined in the configuration
-file.  Help lists the source for these commands.
-'start' is actually; 'dialog-start get wait identify'
+def islinux():
+    """Check if the platform is linux."""
+    return "Linux" == AS["platform"]
 
-The 'continue to next' and 'device failed' dialog windows are built in to
-the interactive loop. Any additional prompts, such as 'dialog-start' or
-'dialog-test' can be added to the process  with their commands.
-and prompt texts are defined in the configuration, which can be
-seen with 'showin config'.
 
-When a process is deemed good, the autoexec can be set to it, and that
-will be what runs automatically, in the process loop, or as a oneshot,
-if no commands are given on the cli.\n\n """
+def mk_cmd(cmd, prefix=""):
+    """
+    Put together a command list for subprocess.run.
+    simplistic, split on spaces to make the list of command pieces.
+    """
+    if prefix:
+        command = [prefix]
+    else:
+        command = []
+    command.extend(cmd.split(" "))
+    logger.debug(command)
+    return command
+
+
+def do_cmd(command, shell=False):
+    """run a sub command, read and return it's output."""
+    if shell is True:
+        command = " ".join(command)
+
+    logging.debug("do_cmd: %s" % command)
+
+    res = subprocess.run(
+        command, shell=shell, stderr=subprocess.PIPE, stdout=subprocess.PIPE
     )
 
+    stderr = res.stderr.decode("utf-8")
+    stdout = res.stdout.decode("utf-8")
 
-symbols = [
-    ["dfu", P.dfu_mode, "Put the device in dfu mode."],
-    ["listen", P.listen, "Put the device in listening mode."],
-    ["list", P.list_usb, "List the particle boards connected to USB."],
-    ["reset", reset_usb, "Reset the usb device"],
-    ["identify", P.identify, "listen and identify"],
-    ["inspect", P.inspect, "Inspect the device"],
-    ["login", P.login, "Login to the particle cloud."],
-    ["logout", P.logout, "Logout of the particle cloud."],
-    ["update", P.update, "dfu/Update device, dfu then update"],
-    ["setup-done", P.set_setup_bit, "Set the Setup bit."],
-    ["add", add, "Add/claim device"],
-    ["product-add", product_add, "Add device to a product"],
-    ["claim", claim, "Cloud claim the device"],
-    ["release", P.release, "Release claim on device"],
-    ["flash", flash_image, "dfu/Flash the configured image"],
-    ["tinker", flash_tinker, "dfu/Flash tinker onto device"],
-    ["flash-test", flash_test, "Flash the test, only, the handshake is up to you."],
-    ["_doctor", P.doctor, "run particle doctor"],
-    ["cloud-status", cloud_status, "Get the cloud status of the current device"],
-    ["get", get_usb_and_id, "Get the USB device and the device id."],
-    ["archive-log", archive_log, "Archive the log to the the device id."],
-    ["input-serial", input_serial, "Dialog to receive an 8 digit serial number."],
-    ["particle-help", particle_help, "Additional Application layer help."],
+    logger.debug("Return Code: %d" % res.returncode)
+    logger.info(stdout)
+    logger.error(stderr)
+
+    if res.returncode:
+        raise Exception("stdout: %s\n stderr: %s\n" % (stdout, stderr))
+
+    return stdout
+
+
+def do_shell(commands, shell=True):
+    do_cmd(commands)
+
+
+def check_connection():
+    "Check the wifi connection with Network manager"
+    if islinux():
+        logger.debug("check connection!")
+        res = do_cmd(["nmcli", "device"])
+        logger.debug(res)
+        if len(re.findall("connected", res)):
+            AS["wifi-connected"] = True
+        else:
+            AS["wifi-connected"] = False
+            return False
+        return True
+    return False
+
+
+def get_SSIDS():
+    # get first column.
+    cmd = ["nmcli", "connection", "show"]
+    res = do_cmd(cmd)
+    ssids = []
+    for line in res.split("\n"):
+        ssids.append(line.split(" ")[0])
+
+    return ssids
+
+
+def select_choice(msg, choices):
+    logger.info("select choice: %s", choices)
+    code, choice = d.menu(
+        msg,
+        title=get_in_config(["dialogs", "title"]),
+        choices=choices,
+        height=50,
+        width=50,
+    )
+    os.system("clear")
+    return choice
+
+
+def connect_SSID(ssid):
+    """Connect the wifi to the SSID given."""
+    cmd = ["nmcli", "device", "wifi", "connect", ssid]
+    res = do_cmd(cmd)
+    logger.info(res)
+
+
+def connect_wifi():
+    """
+    Connect the wifi, get the SSID's, give a selection dialog to choose,
+    then connect to the chosen SSID. Only implemented for linux for use
+    with network manager.
+    """
+    if islinux():
+        if not check_connection():
+            ssids = get_SSIDS()
+            menuitems = []
+            for ssid in ssids:
+                menuitems.append([ssid, ssid])
+            ssid = select_choice("Choose an SSID to Connect.", menuitems)
+            if ssid is not None:
+                logger.info("Connecting to %s" % ssid)
+                connect_SSID(ssid)
+
+
+def confirm_tunnel():
+    "Confirm the ssh tunnel is established"
+    pass
+
+
+def create_tunnel(pem_file, server):
+    "Create an ssh tunnel."
+    pass
+
+
+def connect_tunnel():
+    "Connect to an ssh tunnel"
+    pass
+
+
+def sendlog():
+    "Send the log somewhere."
+    pass
+
+
+def pause_a_sec():
+    "sleep for configured number of some # of seconds."
+    time.sleep(get_in_config(["waiting", "pause_time"]))
+
+
+def wait_for_file(path, timeout):
+    """
+    look for a file at path for the given timeout period.
+    returns True or False, works for /dev/ttyUSB...
+    """
+    start = time.time()
+    print("Waiting for Path:", path)
+    while not os.path.exists(path):
+        if time.time() - start >= timeout:
+            return False
+    return True
+
+
+def wait():
+    """wait for our device to appear."""
+    return wait_for_file(get_in_device("path"), get_in_config(["waiting", "timeout"]))
+
+
+def do_qqc(line):
+    do_qqc_regex = get_in_config(["test", "do_qqc_regex"])
+    if do_qqc_regex:
+        return re.match(do_qqc_regex, line)
+    return False
+
+
+def test_line_fails(line):
+    fail_regex = get_in_config(["test", "fail_regex"])
+    result = False
+    if re.match(fail_regex, line):
+        result = True
+        logger.error("Test failed with: %s" % line)
+    return result
+
+
+def test_done(line):
+    done_regex = get_in_config(["test", "done_regex"])
+    result = False
+    if re.match(done_regex, line):
+        result = True
+        logger.info("Test finished with: %s" % line)
+    return result
+
+
+def handshake():
+    """
+    Handshake with the device after test flash.
+    All parameters are set in the configuration.
+    Wait for start string, respond with response string.
+    Look for fail_regex, done_regex, and do_qqc_regex.
+    If fail, raise exception.
+    if done, exit quietly with true.
+    if do_qqc, then call function and send return to the
+    serial device.
+    """
+    init_string = get_in_config(["test", "start_string"])
+    response_string = get_in_config(["test", "response_string"])
+    do_qqc_func = get_in_config(["test", "do_qqc_func"])
+    baudrate = get_in_config(["serial", "baudrate"])
+    usb_device = get_in_device("path")
+
+    _handshake(usb_device, baudrate, init_string, response_string, do_qqc_func)
+
+
+def _handshake(usb_device, baudrate, init_string, response_string, do_qqc_func):
+    """
+    Handshake with the device after test flash.
+    All parameters are set in the configuration.
+    Wait for start string, respond with response string.
+    Look for fail_regex, done_regex, and do_qqc_regex.
+    If fail, raise exception.
+    if done, exit quietly with true.
+    if do_qqc, then call function and send return to the
+    serial device.
+    """
+
+    result = False  # start with failure, until we get the handshake.
+
+    logger.info("Wait for string: %s" % init_string)
+    # timout=None makes this a blocking call that waits.
+    with serial.Serial(usb_device, baudrate, timeout=None) as ser:
+        got_string = ser.read(size=len(init_string)).decode("utf-8")
+        logger.info("Caught: %s" % got_string)
+
+        # send the response and then wait for test results.
+        if got_string == init_string:
+            logger.info("Sending Response: %s" % response_string)
+            ser.write(bytes(response_string, "utf-8"))
+
+            # so far so good, get ready to fail.
+            result = True
+            logger.info("Waiting for test results.")
+
+            while True:
+                line = ser.readline().decode("utf-8")
+                logging.info(line)
+
+                if test_line_fails(line):
+                    result = False
+                    # break
+                    ser.close()
+                    raise Exception("Fail: %s" % line)
+
+                if do_qqc_func is not None and do_qqc(line):
+                    func = r.get_symbol(do_qqc_func)["fn"]
+                    response = bytes(func() + "\n", "utf-8")
+                    ser.write(response)
+
+                if test_done(line):
+                    break
+
+            ser.close()
+    return result
+
+
+def showall():
+    "Show everything we have in our configuration and state."
+    logger.info(yaml.dump(AS))
+
+
+def showin(keys):
+    """Show a sub-tree in the Application State"""
+    logger.info(yaml.dump(get_in(AS, keys)))
+
+
+def show():
+    "Show the Device data in the application state."
+    showin(["device"])
+
+
+def msgbox(msg):
+    "Display a simple message box, enter to continue."
+    d.msgbox(msg, title=get_in_config(["dialogs", "title"]), height=10, width=50)
+    os.system("clear")
+
+
+def ynbox(msg):
+    "Display a yesno dialog, return True or False."
+    response = d.yesno(
+        msg, title=get_in_config(["dialogs", "title"]), height=10, width=50
+    )
+    os.system("clear")
+    if response == "ok":
+        return True
+    else:
+        return False
+
+
+def continue_to_next():
+    "cli version of continue to next."
+    if re.match("^[yY]?$", input(get_in_config(["dialogs", "continue_to_next"]))):
+        return True
+    raise Exception("Answer was No")
+
+
+def msgcli(msg):
+    """Display a message on the cli and wait for input."""
+    print(msg)
+    input("Press any key to continue;")
+
+
+def continue_to_next_dialog():
+    "Do another one? Dialog. returns True/False"
+    if not ynbox(get_in_config(["dialogs", "start_again"])):
+        logger.info("exiting")
+        return False
+    return True
+
+
+def cli_failed():
+    """cli: Process failed."""
+    msgcli(get_in_config(["dialogs", "device_failed"]))
+
+
+def dialog_failed():
+    """dialog: Process failed."""
+    msgbox(get_in_config(["dialogs", "device_failed"]))
+
+
+# So we have a parameter less functions for all of these.
+
+
+def dialog_start():
+    """dialog: Plugin a board and start a process."""
+    msgbox(get_in_config(["dialogs", "plugin_start"]))
+
+
+def dialog_finish():
+    """dialog: unplug and shutdown a board at the end of a process."""
+    msgbox(get_in_config(["dialogs", "process_finish"]))
+
+
+def dialog_test():
+    """dialog: Ready to test?"""
+    msgbox(get_in_config(["dialogs", "ready_to_test"]))
+
+
+def dialog_flash():
+    """dialog: Ready to flash?"""
+    msgbox(get_in_config(["dialogs", "ready_to_flash"]))
+
+
+# So we have parameter less functions for all of these.
+def cli_start():
+    """cli: Plugin a board and start a process."""
+    msgcli(get_in_config(["dialogs", "plugin_start"]))
+
+
+def cli_finish():
+    """cli: unplug and shutdown a board at the end of a process."""
+    msgcli(get_in_config(["dialogs", "process_finish"]))
+
+
+def cli_test():
+    """cli: Ready to test?"""
+    msgcli(get_in_config(["dialogs", "ready_to_test"]))
+
+
+def cli_flash():
+    """cli: Ready to flash?"""
+    msgcli(get_in_config(["dialogs", "ready_to_flash"]))
+
+
+def archive_log(new_name):
+    "Move/rename the current logfile to the filename given."
+    os.rename(get_in_config(["files", "logfile"]), new_name)
+
+
+def sync_functions():
+    "Sync user functions from the interpreter to the config."
+    funcs = r.get_user_functions()
+    AS["config"]["exec"]["functions"] = funcs
+
+
+def hello():
+    "Just in case we don't know what to do."
+    msg = """You have received this message because your autoexec attribute is
+    set to 'hello' or None, or can't be found. Maybe make some new commands
+    to create some processes. When you get a command you want to run
+    automatically set autoexec exec/autoexec in the config file to it's name.
+    Here are the commands the interpreter currently recognizes."""
+    print(msg)
+    msgcli(get_in_config(["dialogs", "continue"]))
+    help()
+    msgcli(get_in_config(["dialogs", "continue"]))
+
+
+def application_help():
+    """Print help as defined by the function set in ['exec', 'help']
+    in the config. This is a help function as defined by the
+    application layer, which is specific to the functionality
+    that we are interfacing with.
+    """
+    r.eval_cmd(get_in_config(["exec", "help"]))
+
+
+def help():
+    "Everyone needs a little help now and then."
+    print(
+        """Internal command help.\n
+            These are the defined symbols for this REPL. Symbols
+            may be listed to execute them in order.\n"""
+    )
+
+    try:
+        application_help()
+    except Exception:
+        pass
+
+    r.funcptr_help()
+
+    r.specials_help()
+
+    r.compound_help()
+
+    print("\n\n")
+
+
+def eval_default_process():
+    "Run the autoexec process"
+    autoexec = get_in_config(["exec", "autoexec"])
+    print(autoexec)
+    if autoexec is not None:
+        try:
+            r.eval_cmd(autoexec)
+        except Exception as e:
+            logger.error(e)
+            raise Exception(e)
+    else:
+        hello()
+
+
+# define all the symbols for the things we want to do.
+_symbols = [
+    ["hello", hello, "Hello message."],
+    # beginning of local functions.
+    ["wifi", connect_wifi, "Connect to wifi using nmtui if not connected."],
+    ["connect_tunnel", connect_tunnel, "Connect through an ssh tunnel."],
+    ["create_tunnel", create_tunnel, "Create an ssh tunnel."],
+    ["reset-device", reset_device, "Reset the application state with an empty device."],
+    ["wait", wait, "Wait for the usb device to come back."],
+    ["show", show, "showin device, something something."],
+    ["show-all", showall, "show everything we know currently."],
+    [
+        "handshake",
+        handshake,
+        "Look for the test start string, send the response, catch results.",
+    ],
+    ["pause", pause_a_sec, ("Pause/Sleep for 'pause_time' seconds")],
+    ["run", eval_default_process, "Run the default process command."],
+    [
+        "sync-funcs",
+        sync_functions,
+        "Copy the functions from the REPL into the state, automatic w/save.",
+    ],
+    # dialog functions
+    ["dialog-start", dialog_start, "Dialog, for ready to start ?"],
+    ["dialog-test", dialog_test, "Dialog, ready to test ?"],
+    ["dialog-flash", dialog_flash, "Dialog, ready to flash ?"],
+    ["dialog-failed", dialog_failed, "Dialog, ready to flash ?"],
+    ["dialog-finish", dialog_finish, "Dialog, Unplug, power off."],
+    ["cli-start", cli_start, "Dialog, for ready to start ?"],
+    ["cli-test", cli_test, "Dialog, ready to test ?"],
+    ["cli-flash", cli_flash, "Dialog, ready to flash ?"],
+    ["cli-failed", cli_failed, "Dialog, ready to flash ?"],
+    ["cli-finish", cli_finish, "Dialog, Unplug, power off."],
+    ["help", help, "Repl help, list symbols and their help."],
+    ["quit", exit, "Quit"],
 ]
+
+
+def load_functions():
+    """Give the functions from the configuration to the repl.
+    by adding them to the symbol table."""
+    # add in the user functions from the config file.
+
+    # fns = get_in_config(['exec', 'functions'])
+    # print(yaml.dump(fns))
+
+    fns = get_in_config(["exec", "functions"])
+    if fns is not None:
+        for k, v in fns.items():
+            r.add_symbol(k, v["fn"], v["doc"])
+
+
+def save_yaml_file(filename, dictionary):
+    "Write a dictionary as yaml to a file"
+    with open(filename, "w") as f:
+        yaml.dump(dictionary, f)
+
+
+def load_yaml_file(filename):
+    "load a dictionary from a yaml file"
+    if os.path.isfile(filename):
+        logger.info("Loading Configuration: %s" % filename)
+        with open(filename) as f:
+            someyaml = yaml.load(f, Loader=yaml.SafeLoader)
+        return someyaml
+
+
+def load_defaults(state_init, pkgname=None, yamlname=None):
+    global AS
+
+    AS["config"] = merge(AS["config"], load_base_config())
+    AS = merge(AS, state_init)
+    if pkgname is None:
+        return AS
+    AS["config"] = merge(AS["config"], load_pkg_config(pkgname, yamlname))
+    return AS
+
+
+# import pkg_resources
+def load_pkg_config(pkgname, yamlname):
+    """load a configuration file from a package."""
+    logger.info("Loading Configuration: %s: %s" % (pkgname, yamlname))
+    return yaml.load(pkgutil.get_data(pkgname, yamlname), Loader=yaml.SafeLoader)
+    # f = pkg_resources.resource_filename(pkgname, yamlname)
+    # print(f)
+    # print(load_yaml_file(f))
+    # return load_yaml_file(f)
+
+
+def load_base_config():
+    """load the default configuration."""
+    return load_pkg_config(__name__, "SPR-defaults.yaml")
+
+
+def save_config(filename):
+    "Sync the functions from the interpreter and save the configuration."
+    sync_functions()
+    save_yaml_file(filename, AS["config"])
+
+
+def load_config(filename):
+    """load a yaml file into the application's
+    configuration dictionary.
+    """
+    AS["config"] = load_yaml_file(filename)
+
+
+def log_lvl(lvl):
+    """Change the logging level."""
+    logs.set_level(logging.getLogger(), lvl)
 
 
 # Name, function, number of args, help string
 # Commands we want in the repl which can take arguments.
-# look in rcore.py for examples.
-specials = [
+_specials = [
+    ["save-config", save_config, 1, "Save the configuration; save-config filename"],
+    ["load-config", load_config, 1, "Load a configuration; save-config filename"],
+    ["msgbox", msgbox, 1, 'Give a dialog message box; msgbox "some message"'],
     [
-        "_flash",
-        P.flash,
+        "msgcli",
+        msgcli,
         1,
-        "Flash the specified image; _flash boron-system-part1@2.0.1.bin",
-    ]
+        'Give a message to continue at the command line; msgbox "some message"',
+    ],
+    [
+        "loglvl",
+        log_lvl,
+        1,
+        "Change the logging level; loglvl <debug|info|warning|error|critical>",
+    ],
+    ["log_info", logging.info, 1, 'Send a messag to logging; log_info "some message"'],
+    [
+        "log_debug",
+        logging.debug,
+        1,
+        'Send a debug message to logging log_debug "some debug message"',
+    ],
+    [
+        "showin",
+        showin,
+        -1,
+        "Show the value in the Application state; showin config files",
+    ],
+    ["_archive-log", archive_log, 1, "Archive the logfile."],
+    ["sleep", time.sleep, 1, "Sleep for specified seconds; sleep 5"],
+    ["sh", do_shell, -1, "Run a shell command; sh ls -l"],
 ]
 
 
-# get the default parser for the application and add to it if desired.
-parser = None
-# parser = r.get_parser()
-# parser.add_argument("-f", "--foo", action="store_true", help="set foo")
+# endless loop with dialog next y/n.
+def interactive_loop():
+    """Execute the autoexec command in an interactive
+    loop which reports failures and prompts to do another.
+    """
+    interactive = AS["args"]["interactive"]
+    while interactive is True:
+        try:
+            do_one()
+            if continue_to_next_dialog():
+                interactive = False
+        except Exception as e:
+            logger.error(e)
+            if continue_to_next_dialog():
+                interactive = False
+        reset_device()
 
 
-def init():
+def do_one():
+    """Execute the default process one time, with fail and finish dialogs"""
+    try:
+        eval_default_process()
+        dialog_finish()
+
+    except Exception as e:
+        logger.error("Device Failed")
+        logger.error(e)
+        dialog_failed()
+        dialog_finish()
+
+
+def do_something():
     """
-    Call into the interpreter/repl with our stuff,
-    This starts everything up.
+    Maybe start the REPL,
+    or Run the autoexec in a loop,
+    or Run the autoexec once,
+    or Run commands given on the cli.
     """
-    r.init(symbols, specials, parser)
+
+    commands = " ".join(AS["args"]["commands"])
+
+    # Run the repl.
+    if AS["args"]["repl"]:
+        r.repl(get_in_config(["REPL", "prompt"]))
+
+    # if there aren't any commands on the cli
+    # do the auto exec in a loop or once.
+    elif len(commands) == 0:
+        if AS["args"]["interactive"] is True:
+            interactive_loop()
+        else:
+            do_one()
+
+    # run the commands given on the cli.
+    else:
+        logger.info("Attempting to do this: %s", commands)
+        r.eval_cmd(commands)
+
+
+logger = logs.setup_logger()
+
+
+def merge_state(state_dict):
+    """
+    Merge the application's State dictionary with
+    the defaults as needed.
+    """
+    global AS
+
+    # python 3.9 syntax to merge two dictionaries.
+    # Load the base configuration
+    AS["config"] = merge(AS["config"], load_base_config())
+
+    # Merge the application state
+    AS = merge(AS, state_dict)
+
+
+def get_parser():
+    """
+    Create a parser with some defaults and return it so the app can
+    add parameters, groups, etc.
+    """
+    global AS
+
+    return create_parser(AS["defaults"])
+
+
+def init(symbols, specials, parser):
+    """
+    Parse the cli parameters,
+    load the default config or the configuration given,
+    start logging,
+    initialize the symbol tables for the interpreter.
+    Finally, run in whatever mode we were told.
+    """
+    global AS
+
+    if parser is None:
+        parser = get_parser()
+
+    AS["args"] = vars(parser.parse_args())
+
+    if get_in(AS, ["args" "config_file"]):
+        y = load_yaml_file(AS["args"]["config_file"])
+        if y is not None:
+            AS["config"] = merge(AS["config"], y)
+    elif get_in(AS, ["defaults", "config_file"]):
+        y = load_yaml_file(get_in(AS, ["defaults", "config_file"]))
+        if y is not None:
+            AS["config"] = merge(AS["config"], y)
+
+    # print(get_in_config(["files", "loglevel"]))
+
+    logs.add_file_handler(
+        logger,
+        get_in_config(["files", "loglevel"]),
+        get_in_config(["files", "logfile"]),
+    )
+
+    logger.info("Hello there, ready to go.")
+
+    load_functions()
+
+    r.init(_symbols, _specials)
+    r.init(symbols, specials)
+
+    do_something()

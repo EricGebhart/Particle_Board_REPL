@@ -4,7 +4,7 @@ import os
 import subprocess
 import logging
 import time
-import Simple_Process_REPL.core as r
+import Particle_Board_REPL.core as r
 
 logger = logging.getLogger()
 
@@ -85,12 +85,12 @@ def inspect():
 
 def login():
     "Login to particle cloud from the cli prompt"
-    return do_pcmd("cloud login")
+    return os.system("particle cloud login")
 
 
 def logout():
     "Logout of particle cloud, clean up tokens."
-    return do_pcmd("cloud logout")
+    return os.system("particle cloud logout")
 
 
 def get_usb_and_id():
