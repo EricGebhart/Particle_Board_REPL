@@ -50,9 +50,14 @@ running in a loop or one time with no commands.
 """
 
 
+def new_device():
+    """give an emtpy device struct."""
+    return {"id": "", "serial": "", "name": "", "path": "", "last_id": ""}
+
+
 # Application state, which will contain merged data from the application layer.
 AS = {
-    "device": {"id": "", "name": "", "path": "", "last_id": ""},
+    "device": new_device(),
     "config": {},
     "args": {},
     "wifi-connected": False,
@@ -101,14 +106,11 @@ def merge(a, b, path=None, update=True):
 
 def reset_device():
     "Start fresh with empty device values."
-    new_device = {}
-    id = get_in_device("id")
-
-    for k, v in AS["device"]:
-        new_device[k] = ""
-
-    new_device["last_id"] = id
-    AS["device"] = new_device
+    global AS
+    id = get_in_AS(["device", "id"])
+    nd = new_device()
+    nd["last_id"] = id
+    AS["device"] = nd
 
 
 def set(d):
