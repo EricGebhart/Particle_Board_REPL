@@ -91,8 +91,11 @@ def input_serial():
         else:
             r.msgbox(r.get_in_config(["dialogs", "serial_must"]))
 
+    # stash the serial into the device.
+    r.set({"device": {"serial": res}})
     os.system("clear")
     logger.info("Serial Number Entered is: %s" % res)
+    r.show()
     return res
 
 
@@ -177,6 +180,18 @@ def do_pcmd(cmds):
     P.do_pcmd(" ".join(cmds))
 
 
+def name_device(n):
+    """Name/Rename the current device."""
+    P.name(r.get_in_device("id"), n)
+
+
+def name_device_from(varpath):
+    """Name/Rename the device from a variable in the Application state."""
+    n = r.get_in_AS(varpath)
+    logger.info("Naming device: %s" % n)
+    name_device(n)
+
+
 def particle_help():
     """A function to provide additional Application specific help."""
     print(
@@ -249,6 +264,18 @@ specials = [
         do_pcmd,
         -1,
         "Run any particle cli command; pcmd whoami",
+    ],
+    [
+        "name-from",
+        name_device_from,
+        -1,
+        "Name the current device from a variable in the Application State",
+    ],
+    [
+        "name-device",
+        name_device,
+        1,
+        "Name the current device",
     ],
 ]
 

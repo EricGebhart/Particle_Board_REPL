@@ -117,8 +117,80 @@ def set(d):
     the Application state.
     """
     global AS
-    merge = AS | d
-    AS = merge
+    AS = merge(AS, d)
+
+
+def set_in(keys):
+    """Takes a list of keys ending with the value to assign
+    into the Application State dictionary tree."""
+    global AS
+    AS = merge(AS, make_dict(keys))
+
+
+def set_in_from(keys):
+    """Takes 2 lists of keys separated with 'from:' the value to assign
+    into the Application State and where to get it from."""
+    global AS
+    set_keys = []
+    from_keys = []
+    dest = set_keys
+    for k in keys:
+        if k == "from:":
+            dest = from_keys
+            continue
+        dest += [k]
+
+    set_keys += [get_in(AS, from_keys)]
+    set_in(set_keys)
+
+
+def merge(a, b, path=None, update=True):
+    """nice solution from stack overflow, non-destructive merge.
+    http://stackoverflow.com/questions/7204805/python-dictionaries-of-dictionaries-merge
+    """
+    if path is None:
+        path = []
+    for key in b:
+        if key in a:
+            if isinstance(a[key], dict) and isinstance(b[key], dict):
+                merge(a[key], b[key], path + [str(key)])
+            elif a[key] == b[key]:
+                pass  # same leaf value
+            elif isinstance(a[key], list) and isinstance(b[key], list):
+                for idx, val in enumerate(b[key]):
+                    a[key][idx] = merge(
+                        a[key][idx],
+                        b[key][idx],
+                        path + [str(key), str(idx)],
+                        update=update,
+                    )
+            elif update:
+                a[key] = b[key]
+            else:
+                raise Exception("Conflict at %s" % ".".join(path + [str(key)]))
+        else:
+            a[key] = b[key]
+    return a
+
+
+def make_dict(keys):
+    """Create a dictionary tree with a value from a list.
+    ie. make_dict(["foo", "bar", value]) => {foo: {bar: value}}
+    """
+    d = {}
+    v = None
+    for x in reversed(keys):
+        if v is None:
+            v = x
+        else:
+            d = {x: v}
+            v = d
+    return v
+
+
+def get_in_AS(keys):
+    """Convenience, get from the state root."""
+    return get_in(AS, keys)
 
 
 def get_in(dict_tree, keys):
@@ -723,6 +795,18 @@ _specials = [
         -1,
         "Show the value in the Application state; showin config files",
     ],
+    [
+        "set-in",
+        set_in,
+        -1,
+        'Set a value in the Application state with a value vector; set-in device serial "1234"',
+    ],
+    [
+        "set-in-from",
+        set_in_from,
+        -1,
+        "Set a value in the Application state from another value vector; set-in device name from: device serial ",
+    ],
     ["_archive-log", archive_log, 1, "Archive the logfile."],
     ["sleep", time.sleep, 1, "Sleep for specified seconds; sleep 5"],
     ["sh", do_shell, -1, "Run a shell command; sh ls -l"],
@@ -771,6 +855,9 @@ def do_something():
     or Run commands given on the cli.
     """
 
+    # Need to add loading of args/file if it was
+    # specified on the cli.
+
     # make sure the cli is something or it is None.
     commands = get_in(AS, ["args", "commands"])
     if commands is not None and len(commands) > 0:
@@ -782,18 +869,16 @@ def do_something():
     if AS["args"]["repl"]:
         r.repl(get_in_config(["REPL", "prompt"]), commands)
 
-    # if there aren't any commands on the cli
     # do the auto exec in a loop or once.
-    elif len(commands) == 0:
-        if AS["args"]["interactive"] is True:
-            interactive_loop(commands)
-        else:
-            do_one(commands)
-
-    # run the commands given on the cli.
+    if AS["args"]["interactive"] is True:
+        interactive_loop(commands)
     else:
-        logger.debug("Attempting to do this: %s", commands)
-        r.eval_cmd(commands)
+        do_one(commands)
+
+    # # run the commands given on the cli.
+    # else:
+    #     logger.debug("Attempting to do this: %s", commands)
+    #     r.eval_cmd(commands)
 
 
 logger = logs.setup_logger()

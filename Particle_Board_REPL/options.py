@@ -1,5 +1,6 @@
 import argparse
 import textwrap
+from Particle_Board_REPL import __version__
 
 help_prefix = textwrap.dedent(
     """\
@@ -99,7 +100,22 @@ def create_parser(defaults):
     parser = get_argp()
 
     parser.add_argument(
-        "--config-file", dest="config_file", type=argparse.FileType(mode="r")
+        "--config-file",
+        dest="config_file",
+        type=argparse.FileType(mode="r"),
+    )
+
+    parser.add_argument(
+        "--file",
+        dest="file",
+        type=argparse.FileType(mode="r"),
+    )
+
+    parser.add_argument(
+        "-v",
+        "--version",
+        action="version",
+        version="%(prog)s " + __version__,
     )
 
     parser.add_argument(
@@ -109,7 +125,12 @@ def create_parser(defaults):
         help="logfile to use",
     )
 
-    parser.add_argument("-r", "--repl", action="store_true", help="Start a REPL")
+    parser.add_argument(
+        "-r",
+        "--repl",
+        action="store_true",
+        help="Start a REPL",
+    )
 
     parser.add_argument(
         "-i",

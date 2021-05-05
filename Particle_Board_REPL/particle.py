@@ -178,6 +178,11 @@ def release(device_id):
     do_pcmd("device remove {}".format(device_id))
 
 
+def name(device_id, n):
+    """Name/Rename a device"""
+    do_pcmd("device rename %s %s" % (device_id, n))
+
+
 def cloud_status(device_id):
     """Check the cloud-status of the device."""
     do_pcmd("usb cloud-status {}".format(device_id))
