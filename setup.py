@@ -28,5 +28,5 @@ setup(
     scripts=[],
     license="MIT",
     entry_points={"console_scripts": ["PBR=Particle_Board_REPL.__main__:main"]},
-    install_requires=["regex", "serial", "pythondialog", "pyYAML"],
+    install_requires=["regex", "pyserial", "pythondialog", "pyYAML"],
 )
