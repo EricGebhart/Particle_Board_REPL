@@ -36,6 +36,8 @@ waiting:
 
 dialogs :
     title : 'Particle Board Interface'
+    welcome          : 'Welcome to the Particle Board Tester, press OK to start'
+    #welcome          : ''
     plugin_start     : 'Plug in a new device, press OK to start'
     ready_to_test    : 'Ready to Test. Press OK to test'
     ready_to_flash   : 'Ready to Flash. Press OK to flash'

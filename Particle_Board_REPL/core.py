@@ -107,7 +107,11 @@ def merge(a, b, path=None, update=True):
 def reset_device():
     "Start fresh with empty device values."
     global AS
-    id = get_in_AS(["device", "id"])
+    id = None
+    try:
+        id = get_in_AS(["device", "id"])
+    except Exception:
+        id = None
     nd = new_device()
     nd["last_id"] = id
     AS["device"] = nd
@@ -524,7 +528,7 @@ def msgcli(msg):
 
 def continue_to_next_dialog():
     "Do another one? Dialog. returns True/False"
-    if not ynbox(get_in_config(["dialogs", "start_again"])):
+    if ynbox(get_in_config(["dialogs", "start_again"])):
         logger.info("exiting")
         return False
     return True
@@ -541,6 +545,13 @@ def dialog_failed():
 
 
 # So we have a parameter less functions for all of these.
+
+
+def dialog_welcome():
+    """dialog: Welcome to the interactive loop process."""
+    msg = get_in_config(["dialogs", "welcome"])
+    if msg:
+        msgbox(msg)
 
 
 def dialog_start():
@@ -820,6 +831,7 @@ def interactive_loop(commands=None):
     """Execute the autoexec command in an interactive
     loop which reports failures and prompts to do another.
     """
+    dialog_welcome()
     interactive = AS["args"]["interactive"]
     while interactive is True:
         try:
